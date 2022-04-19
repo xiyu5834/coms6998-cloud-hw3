@@ -1,0 +1,151 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+    Endpoint:
+        Description: sagemaker endpoint
+        Type: String
+        Default: sms-spam-classifier-mxnet-2022-04-18-01-00-23-470
+
+    DomainEmail:
+        Description: default recipient email
+        Type: String
+        Default: project3@qweasd.me
+
+    EmailStoreBucketName:
+        Description: name for email store bucket
+        Type: String
+        Default: hw3emailstore
+Resources:
+    SESLambdaFunctionCF:
+        Type: AWS::Lambda::Function
+        Properties:
+          FunctionName: hw3LF1-CF
+          Environment:
+            Variables:
+              ENDPOINT:
+                Ref: Endpoint
+              SENDER:
+                Ref: DomainEmail
+          Role:
+            Fn::GetAtt:
+            - LambdaFunctionRole
+            - Arn
+          Handler: lambda_function.lambda_handler
+          Code:
+            S3Bucket: coms6998-cloud-hw3
+            S3Key: hw3.zip
+          Layers:
+          - arn:aws:lambda:us-east-1:770693421928:layer:Klayers-p39-numpy:2
+          Runtime: python3.9
+          Timeout: 300
+    S3Bucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName:
+            Ref: EmailStoreBucketName
+          NotificationConfiguration:
+            LambdaConfigurations:
+            - Event: s3:ObjectCreated:*
+              Function:
+                Fn::GetAtt:
+                - SESLambdaFunctionCF
+                - Arn
+    S3EmailBucketPolicy:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+          Bucket:
+            Ref: S3Bucket
+          PolicyDocument:
+            Id: IdPlo
+            Version: '2012-10-17'
+            Statement:
+            - Sid: AllowSESPuts
+              Effect: Allow
+              Principal:
+                Service: ses.amazonaws.com
+              Action: s3:PutObject
+              Resource:
+                Fn::Join:
+                - ''
+                - - 'arn:aws:s3:::'
+                  - Ref: S3Bucket
+                  - "/*"
+              Condition:
+                StringEquals:
+                  aws:Referer:
+                    Ref: AWS::AccountId
+    LambdaInvokePermissionForS3:
+        Type: AWS::Lambda::Permission
+        Properties:
+          FunctionName:
+            Fn::GetAtt:
+            - SESLambdaFunctionCF
+            - Arn
+          Action: lambda:InvokeFunction
+          Principal: s3.amazonaws.com
+          SourceAccount:
+            Ref: AWS::AccountId
+          SourceArn:
+            Fn::Sub: arn:aws:s3:::${EmailStoreBucketName}
+    LambdaFunctionRole:
+        Type: AWS::IAM::Role
+        Properties:
+          RoleName: LambdaFunctionRole
+          AssumeRolePolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                - lambda.amazonaws.com
+              Action:
+              - sts:AssumeRole
+          Path: "/"
+          Policies:
+          - PolicyName: AWSLambdaBasicExecutionRole
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+              - Effect: Allow
+                Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+                Resource: "*"
+          - PolicyName: AmazonS3FullAccess
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+              - Effect: Allow
+                Action: s3:*
+                Resource: "*"
+          - PolicyName: AmazonSESFullAccess
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+              - Effect: Allow
+                Action: ses:*
+                Resource: "*"
+          - PolicyName: AmazonSageMakerFullAccess
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+              - Effect: Allow
+                Action: sagemaker:*
+                Resource: "*"
+    ReceiptRuleSet :
+        Type: AWS::SES::ReceiptRuleSet
+        Properties:
+          RuleSetName: receiptrulesetCF
+    ReceiptRule:
+        Type: AWS::SES::ReceiptRule
+        Properties:
+          Rule:
+            Name: receiptruleCF
+            Enabled: false
+            ScanEnabled: false
+            Actions:
+            - S3Action:
+                BucketName:
+                  Ref: S3Bucket
+          RuleSetName:
+            Ref: ReceiptRuleSet
